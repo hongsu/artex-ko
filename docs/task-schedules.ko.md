@@ -15,7 +15,7 @@ services:
       TZ: Asia/Seoul
 ```
 
-시스템 설정에서 환경변수 TZ(읽기 전용), 시간대 override, 현재 적용 시간대와 출처를 확인할 수 있습니다. 우선순위는 유효한 시스템 override → 유효한 TZ → Asia/Seoul입니다. override를 비우면 환경변수를 다시 사용합니다. `Local`이나 파일 경로 대신 `Asia/Seoul`, `Europe/London`, `UTC` 같은 IANA 이름을 사용하세요.
+시스템 설정의 표시 언어 바로 아래에서 서버 시간대(읽기 전용), 예약 기본 시간대, 현재 적용 시간대와 출처를 확인할 수 있습니다. 우선순위는 유효한 시스템 override → 유효한 TZ → Asia/Seoul입니다. override를 비우면 환경변수를 다시 사용합니다. `Local`이나 파일 경로 대신 `Asia/Seoul`, `Europe/London`, `UTC` 같은 IANA 이름을 사용하세요.
 
 웹에는 TZ만 명시적으로 노출하며, 전체 환경변수를 반환하지 않습니다. 유효하지 않은 TZ는 화면에서 원래 값과 실제 적용 기본값을 확인할 수 있습니다. 시간대 데이터는 Go 바이너리에 포함됩니다.
 
