@@ -64,6 +64,14 @@ func (s *Server) startTaskEngine(t *Task) {
 	if ctx.Err() != nil || s.engine.IsDeleting(t.ID) {
 		return
 	}
+	id, _ := strconv.ParseInt(t.ID, 10, 64)
+	if err := s.m.pg.PrepareScheduledTask(id, func() { s.seed(t, t.Description+" "+t.Goal) }); err != nil {
+		log.Printf("[schedule] prepare task %s failed: %v", t.ID, err)
+		// Persist retry through the existing bootstrap queue rather than losing it.
+		state := t.lifecycleSnapshot()
+		_ = s.m.ApplyTaskAdmission(t.ID, state.Status, state.Status, true, "bootstrap", true)
+		return
+	}
 	s.engine.emitActivity(t, db.Activity{Worker: "planner", Kind: "round",
 		Summary: goalBreakdownRound0Summary})
 	goals := s.createGoals(ctx, t, func(r db.Activity) {

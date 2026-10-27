@@ -43,6 +43,7 @@ func (sc *Scheduler) Run(ctx context.Context) {
 		return
 	}
 	sc.init()
+	sc.s.tickTaskSchedules(time.Now(), true)
 	t := time.NewTicker(sc.tick)
 	defer t.Stop()
 	for {
@@ -50,6 +51,7 @@ func (sc *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			sc.s.tickTaskSchedules(time.Now(), false)
 			sc.s.reconcileConcurrency() // 并发上限:有空位就把排队任务补位启动
 			sc.step()
 		}

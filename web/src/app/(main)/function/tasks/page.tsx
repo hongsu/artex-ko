@@ -49,6 +49,8 @@ import { AssetInterceptRulesEditor } from "@/components/asset-intercept-rules-ed
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
+import { TaskScheduleFields } from "@/components/task-schedule-fields";
+import { TaskScheduleManager } from "@/components/task-schedule-manager";
 import { TaskTemplateControls } from "@/components/task-template-controls";
 import {
   AlertDialog,
@@ -133,6 +135,7 @@ import type {
   TaskArchive,
   TaskArchiveState,
   TaskCategory,
+  TaskScheduleSpec,
   TaskStatus,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -917,6 +920,7 @@ export default function TasksPage() {
                 onChanged={refreshCategoriesAndTasks}
                 onTaskMoved={applyTaskCategoryMove}
               />
+              <TaskScheduleManager />
               <CreateTaskSheet
                 tasks={tasks}
                 categories={categories}
@@ -3146,6 +3150,8 @@ function CreateTaskSheet({
   onCategoriesChanged: () => void;
 }) {
   const t = useTranslations("tasksPage");
+  const ts = useTranslations("taskSchedule");
+  const [schedule, setSchedule] = React.useState<TaskScheduleSpec | null>(null);
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [categoryID, setCategoryID] = React.useState<number | undefined>(undefined);
@@ -3218,6 +3224,7 @@ function CreateTaskSheet({
       const timeoutSec = Math.max(0, Math.floor(Number(timeoutMin) || 0)) * 60;
       const heartbeatSec = Math.max(10, Math.floor(Number(heartbeatMin) || 10)) * 60; // 下限 10min，与后端归一一致
       await api.createTask({
+        schedule: schedule ?? undefined,
         name: name.trim(),
         categoryId: categoryID,
         description: description.trim(),
@@ -3233,7 +3240,8 @@ function CreateTaskSheet({
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
           .filter((r) => r.pattern !== ""),
       });
-      toast.success(t("create.createdToast"));
+      toast.success(schedule ? ts("saved") : t("create.createdToast"));
+      setSchedule(null);
       setName("");
       setCategoryID(undefined);
       setDescription("");
@@ -3279,6 +3287,7 @@ function CreateTaskSheet({
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid gap-5">
+            <TaskScheduleFields value={schedule} onChange={setSchedule} />
             <TaskTemplateControls
               description={description}
               goal={goal}
@@ -3462,7 +3471,7 @@ function CreateTaskSheet({
           </SheetClose>
           <Button onClick={createTask} disabled={creating || uploading}>
             {creating && <Spinner data-icon="inline-start" />}
-            {creating ? t("create.creating") : t("create.create")}
+            {creating ? t("create.creating") : schedule ? ts("scheduleButton") : t("create.create")}
           </Button>
         </SheetFooter>
       </SheetContent>

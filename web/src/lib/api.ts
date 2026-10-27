@@ -1,3 +1,4 @@
+import type { TaskSchedule, TaskScheduleRun, TaskScheduleSpec } from "@/lib/types";
 // Real backend client. /api/* is proxied to the Go backend (next.config rewrites).
 // Returns the domain types in lib/types.ts. Shapes match the backend handlers;
 // a few fields the backend serializes differently (e.g. created_at as a unix int)
@@ -277,9 +278,10 @@ export const api = {
     seedFirstIntent?: boolean;
     planHeartbeatSeconds?: number;
     coverageEnabled?: boolean;
+    schedule?: TaskScheduleSpec;
     interceptRules?: AssetInterceptRuleInput[];
-  }) =>
-    post<Task>("/tasks", {
+  }) => {
+    const task = {
       name: input.name ?? "",
       category_id: input.categoryId ?? null,
       description: input.description,
@@ -292,7 +294,25 @@ export const api = {
       plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = 后端归一到默认 600(10min)
       coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
       intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
+    };
+    return input.schedule
+      ? post<TaskSchedule>("/task-schedules", { task, spec: input.schedule })
+      : post<Task>("/tasks", task);
+  },
+  taskSchedules: () => get<{ schedules: TaskSchedule[] }>("/task-schedules").then((r) => arr(r.schedules)),
+  previewTaskSchedule: (spec: TaskScheduleSpec) =>
+    post<{ next_run_at: string; timezone: string }>("/task-schedules/preview", { spec }),
+  updateTaskSchedule: (
+    id: number,
+    input: { spec?: TaskScheduleSpec; enabled?: boolean; task?: TaskSchedule["task"]; revision?: number },
+  ) =>
+    put<TaskSchedule>(`/task-schedules/${id}`, {
+      ...input,
+      task: input.task ? { ...input.task, source_task_ids: (input.task.source_task_ids ?? []).map(String) } : undefined,
     }),
+  deleteTaskSchedule: (id: number) => del<{ ok: boolean }>(`/task-schedules/${id}`),
+  taskScheduleRuns: (id: number) =>
+    get<{ runs: TaskScheduleRun[] }>(`/task-schedules/${id}/runs`).then((r) => arr(r.runs)),
   taskCategories: () => get<{ categories: TaskCategory[] }>("/task-categories").then((r) => arr(r.categories)),
   updateTask: (id: string, input: { name?: string; pinned?: boolean }) => patch<Task>(`/tasks/${id}`, input),
   renameTask: (id: string, name: string) => patch<Task>(`/tasks/${id}`, { name }),

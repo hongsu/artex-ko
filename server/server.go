@@ -28,6 +28,7 @@ import (
 	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/notify"
 	"github.com/Autumn-27/artex/report"
+	"github.com/Autumn-27/artex/schedule"
 	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
@@ -328,8 +329,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 			log.Printf("[retester] seed: %v", err)
 		}
 		go s.evidenceStore().RunGC(s.ctx)
-		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
-		go newScheduler(s).Run(s.ctx) // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
+		s.seedPythonInterpreter() // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
 		// 통합 테스트는 stepRealtime·stepDigest 를 직접 호출해 분배를 결정론적으로
@@ -363,6 +363,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		log.Printf("[engine] no LLM provider configured — engine idle until set via /api/llm or env")
 	}
 	s.restoreTaskRuntimes()
+	if m.pg != nil {
+		go newScheduler(s).Run(s.ctx)
+	}
 	go s.reconcileConcurrency()
 	s.startTaskArchiveWorker()
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
@@ -398,6 +401,10 @@ func (s *Server) restoreTaskRuntimes() {
 	for _, t := range m.List() {
 		lifecycle := t.lifecycleSnapshot()
 		if !lifecycle.Queued && !isTerminalStatus(lifecycle.Status) {
+			if s.shouldBootstrapScheduledTask(t) {
+				s.startAdmittedTask(t, "bootstrap")
+				continue
+			}
 			s.engine.Run(s.ctx, t)
 		}
 	}
@@ -782,6 +789,12 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTask)
+	mux.HandleFunc("GET /api/task-schedules", s.listTaskSchedules)
+	mux.HandleFunc("POST /api/task-schedules", s.createTaskSchedule)
+	mux.HandleFunc("POST /api/task-schedules/preview", s.previewTaskSchedule)
+	mux.HandleFunc("PUT /api/task-schedules/{id}", s.updateTaskSchedule)
+	mux.HandleFunc("DELETE /api/task-schedules/{id}", s.deleteTaskSchedule)
+	mux.HandleFunc("GET /api/task-schedules/{id}/runs", s.taskScheduleHistory)
 	mux.HandleFunc("GET /api/task-categories", s.pgListTaskCategories)
 	mux.HandleFunc("POST /api/task-categories", s.pgCreateTaskCategory)
 	mux.HandleFunc("PATCH /api/task-categories/{id}", s.pgRenameTaskCategory)
@@ -1575,56 +1588,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(req.Description) == "" {
-		req.Description = "未命名任务"
-	}
-	if len(req.LLMProfileIDs) == 0 && req.LLMProfileID != nil {
-		req.LLMProfileIDs = []int64{*req.LLMProfileID}
-	}
-	if err := s.validateTaskProfileIDs(req.LLMProfileIDs); err != nil {
+	opts, err := s.taskRequestOptions(&req)
+	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if req.TimeoutSeconds < 0 {
-		req.TimeoutSeconds = 0
-	}
-	if len(req.SourceTaskIDs) > db.MaxTaskSourceCount {
-		writeErr(w, 400, fmt.Sprintf(trMsg(errCreateTaskSourceLimit), db.MaxTaskSourceCount))
-		return
-	}
-	sourceIDs := make([]int64, 0, len(req.SourceTaskIDs))
-	seenSources := map[int64]bool{}
-	for _, raw := range req.SourceTaskIDs {
-		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-		if err != nil || id <= 0 || seenSources[id] {
-			writeErr(w, 400, errCreateTaskSourceInvalid)
-			return
-		}
-		if _, ok := s.m.Task(strconv.FormatInt(id, 10)); !ok {
-			writeErr(w, 400, fmt.Sprintf(trMsg(errCreateTaskSourceNotFound), id))
-			return
-		}
-		seenSources[id] = true
-		sourceIDs = append(sourceIDs, id)
-	}
-	companyIDs, err := db.NormalizeTaskCompanyIDs(req.CompanyIDs)
-	if err != nil {
-		writeErr(w, 400, fmt.Sprintf(trMsg(errCreateTaskCompanyLimit), db.MaxTaskCompanyCount))
-		return
-	}
-	req.CompanyIDs = companyIDs
-	interceptRules, err := buildTaskInterceptRules(req.InterceptRules)
-	if err != nil {
-		writeErr(w, 400, errCreateTaskInterceptRules+err.Error())
-		return
-	}
-	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
-		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
-		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
-		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
-		CoverageEnabled: req.CoverageEnabled,
-		InterceptRules:  interceptRules,
-	})
+	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, opts)
+
 	if err != nil {
 		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {
 			writeErr(w, 400, errCreateTaskCategoryInvalid)
@@ -1642,6 +1612,52 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	// launchTask 内部异步,不阻塞 UI —— 目标分解在后台可见地进行。
 	s.launchTask(t, req.Description+" "+req.Goal, req.SeedFirstIntent != nil && *req.SeedFirstIntent)
 	writeJSON(w, 201, taskDTO(t, s.resolvedTaskStatus(t)))
+}
+
+func (s *Server) taskRequestOptions(req *createTaskReq) (db.TaskCreateOptions, error) {
+	if strings.TrimSpace(req.Description) == "" {
+		req.Description = "未命名任务"
+	}
+	if len(req.LLMProfileIDs) == 0 && req.LLMProfileID != nil {
+		req.LLMProfileIDs = []int64{*req.LLMProfileID}
+	}
+	if err := s.validateTaskProfileIDs(req.LLMProfileIDs); err != nil {
+		return db.TaskCreateOptions{}, errors.New(err.Error())
+	}
+	if req.TimeoutSeconds < 0 {
+		req.TimeoutSeconds = 0
+	}
+	if len(req.SourceTaskIDs) > db.MaxTaskSourceCount {
+		return db.TaskCreateOptions{}, errors.New(fmt.Sprintf(trMsg(errCreateTaskSourceLimit), db.MaxTaskSourceCount))
+	}
+	sourceIDs := make([]int64, 0, len(req.SourceTaskIDs))
+	seenSources := map[int64]bool{}
+	for _, raw := range req.SourceTaskIDs {
+		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil || id <= 0 || seenSources[id] {
+			return db.TaskCreateOptions{}, errors.New(errCreateTaskSourceInvalid)
+		}
+		if _, ok := s.m.Task(strconv.FormatInt(id, 10)); !ok {
+			return db.TaskCreateOptions{}, errors.New(fmt.Sprintf(trMsg(errCreateTaskSourceNotFound), id))
+		}
+		seenSources[id] = true
+		sourceIDs = append(sourceIDs, id)
+	}
+	companyIDs, err := db.NormalizeTaskCompanyIDs(req.CompanyIDs)
+	if err != nil {
+		return db.TaskCreateOptions{}, errors.New(fmt.Sprintf(trMsg(errCreateTaskCompanyLimit), db.MaxTaskCompanyCount))
+	}
+	req.CompanyIDs = companyIDs
+	interceptRules, err := buildTaskInterceptRules(req.InterceptRules)
+	if err != nil {
+		return db.TaskCreateOptions{}, errors.New(errCreateTaskInterceptRules + err.Error())
+	}
+	return db.TaskCreateOptions{
+		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
+		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
+		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
+		CoverageEnabled: req.CoverageEnabled, InterceptRules: interceptRules,
+	}, nil
 }
 
 func (s *Server) validateTaskProfileIDs(ids []int64) error {
@@ -3401,7 +3417,9 @@ func (s *Server) settingsPayload() map[string]any {
 	}
 	// 사용자 대면 출력 언어: 런타임 설정값 > config.Language() 기본값(ARTEX_LANG·설정 파일·한국어).
 	outputLang := s.outputLanguage()
+	tzEnv, tzOverride, tzEffective, tzSource := s.timezoneSettings()
 	return map[string]any{
+		"timezone_env": tzEnv, "timezone_override": tzOverride, "timezone_effective": tzEffective, "timezone_source": tzSource,
 		"output_language":          outputLang, // 사용자 대면 출력 언어(en/ko/zh/es/ja)
 		"traffic_capture":          s.m.TrafficEnabled(),
 		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
@@ -3505,11 +3523,23 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyDigestMins *int    `json:"notify_digest_interval_min"`
 		// 사용자 대면 출력 언어(en/ko/zh/es/ja). 에이전트 훅이 매 턴 읽으므로 즉시 적용되고
 		// 에이전트를 다시 생성할 필요가 없다. null=변경 안 함.
-		OutputLanguage *string `json:"output_language"`
+		OutputLanguage   *string `json:"output_language"`
+		TimezoneOverride *string `json:"timezone_override"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if req.TimezoneOverride != nil {
+		zone := strings.TrimSpace(*req.TimezoneOverride)
+		if zone != "" && !schedule.ValidTimezone(zone) {
+			writeErr(w, 400, "invalid IANA timezone")
+			return
+		}
+		if err := s.m.pg.SetSetting("timezone_override", zone); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if req.ConstraintsInjectPlanner != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectPlanner, *req.ConstraintsInjectPlanner); err != nil {

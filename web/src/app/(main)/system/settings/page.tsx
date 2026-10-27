@@ -26,6 +26,7 @@ import { api } from "@/lib/api";
 import { type ChatSendMode, setChatSendMode, useChatSendMode, useChatSendModeOptions } from "@/lib/chat-send-mode";
 import type { Settings } from "@/lib/types";
 
+import { TimezoneCard } from "./_components/timezone-card";
 import { UpdateCard } from "./_components/update-card";
 
 export default function SystemSettingsPage() {
@@ -650,32 +651,35 @@ export default function SystemSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="mb-4 break-inside-avoid md:mb-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <LanguagesIcon className="size-4" />
-              {t("language.title")}
-            </CardTitle>
-            <CardDescription>{t("language.desc")}</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <Label htmlFor="ui-language" className="text-sm font-normal text-muted-foreground">
-              {t("language.label")}
-            </Label>
-            <Select value={activeLocale} onValueChange={changeLanguage}>
-              <SelectTrigger id="ui-language" className="w-72">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LOCALES.map((loc) => (
-                  <SelectItem key={loc} value={loc}>
-                    {LOCALE_LABELS[loc]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </CardContent>
-        </Card>
+        <div className="mb-4 break-inside-avoid md:mb-6">
+          <Card className="mb-4 break-inside-avoid md:mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <LanguagesIcon className="size-4" />
+                {t("language.title")}
+              </CardTitle>
+              <CardDescription>{t("language.desc")}</CardDescription>
+            </CardHeader>
+            <CardContent className="flex items-center justify-between gap-4">
+              <Label htmlFor="ui-language" className="text-sm font-normal text-muted-foreground">
+                {t("language.label")}
+              </Label>
+              <Select value={activeLocale} onValueChange={changeLanguage}>
+                <SelectTrigger id="ui-language" className="w-72">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LOCALES.map((loc) => (
+                    <SelectItem key={loc} value={loc}>
+                      {LOCALE_LABELS[loc]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </CardContent>
+          </Card>
+          <TimezoneCard />
+        </div>
 
         <Card className="mb-4 break-inside-avoid md:mb-6">
           <CardHeader>
