@@ -144,18 +144,18 @@ func (d *DB) CreateTask(description, goal string, llmProfileID *int64, timeoutSe
 // TaskCreateOptions contains the task data that must be committed atomically
 // with the task/exploration row.
 type TaskCreateOptions struct {
-	Name                 string // 可选任务名称;空=未命名
-	CategoryID           *int64
-	SourceTaskIDs        []int64
-	CompanyIDs           []int64
-	LLMProfileIDs        []int64
-	TimeoutSeconds       int
-	PlanHeartbeatSeconds int
+	Name                 string  `json:"name"` // 可选任务名称;空=未命名
+	CategoryID           *int64  `json:"category_id"`
+	SourceTaskIDs        []int64 `json:"source_task_ids"`
+	CompanyIDs           []int64 `json:"company_ids"`
+	LLMProfileIDs        []int64 `json:"llm_profile_ids"`
+	TimeoutSeconds       int     `json:"timeout_seconds"`
+	PlanHeartbeatSeconds int     `json:"plan_heartbeat_seconds"`
 	// CoverageEnabled 是「资产覆盖度功能」开关;nil=默认开(true)，让不关心该开关的创建
 	// 路径(编排 spawn、老 API)沿用原行为。仅 web 创建任务时可显式传 false 关闭。
-	CoverageEnabled *bool
+	CoverageEnabled *bool `json:"coverage_enabled"`
 	// InterceptRules 是任务级资产拦截规则,创建时随任务在同一事务内写入 task_intercept_rules。
-	InterceptRules []TaskInterceptRuleInput
+	InterceptRules []TaskInterceptRuleInput `json:"intercept_rules"`
 }
 
 // CreateTaskWithOptions creates an exploration, task, direct source relations,
@@ -164,16 +164,30 @@ func (d *DB) CreateTaskWithOptions(description, goal string, opts TaskCreateOpti
 	if len(opts.SourceTaskIDs) > MaxTaskSourceCount {
 		return nil, fmt.Errorf("too many source tasks: got %d, maximum is %d", len(opts.SourceTaskIDs), MaxTaskSourceCount)
 	}
-	companyIDs, err := NormalizeTaskCompanyIDs(opts.CompanyIDs)
-	if err != nil {
+	if _, err := NormalizeTaskCompanyIDs(opts.CompanyIDs); err != nil {
 		return nil, err
 	}
-	opts.CompanyIDs = companyIDs
 	tx, err := d.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	t, err := createTaskWithOptionsTx(tx, description, goal, opts)
+	if err != nil {
+		return nil, err
+	}
+	return t, tx.Commit()
+}
+
+func createTaskWithOptionsTx(tx *sql.Tx, description, goal string, opts TaskCreateOptions) (*Task, error) {
+	if len(opts.SourceTaskIDs) > MaxTaskSourceCount {
+		return nil, fmt.Errorf("too many source tasks: got %d, maximum is %d", len(opts.SourceTaskIDs), MaxTaskSourceCount)
+	}
+	companyIDs, err := NormalizeTaskCompanyIDs(opts.CompanyIDs)
+	if err != nil {
+		return nil, err
+	}
+	opts.CompanyIDs = companyIDs
 	var expID int64
 	if err := tx.QueryRow(`INSERT INTO explorations(description, goal) VALUES ($1,$2) RETURNING id`, description, goal).Scan(&expID); err != nil {
 		return nil, err
@@ -248,7 +262,7 @@ RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, descripti
 	} else {
 		t.LLMFailoverState = "ready"
 	}
-	return t, tx.Commit()
+	return t, nil
 }
 
 func insertTaskCompanies(tx *sql.Tx, taskID int64, companyIDs []int64) error {

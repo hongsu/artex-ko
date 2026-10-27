@@ -1384,3 +1384,28 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_batch
     ON notification_deliveries(batch_id) WHERE batch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_channel
     ON notification_deliveries(channel_id, id DESC);
+
+-- Calendar task schedules. Additive migration; applied only on application startup.
+CREATE TABLE IF NOT EXISTS task_schedules (
+    id BIGSERIAL PRIMARY KEY,
+    revision BIGINT NOT NULL DEFAULT 0,
+    spec JSONB NOT NULL,
+    task JSONB NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    next_run_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS task_schedules_due ON task_schedules(next_run_at) WHERE enabled;
+CREATE TABLE IF NOT EXISTS task_schedule_runs (
+    id BIGSERIAL PRIMARY KEY,
+    schedule_id BIGINT NOT NULL REFERENCES task_schedules(id) ON DELETE CASCADE,
+    scheduled_at TIMESTAMPTZ NOT NULL,
+    task_id BIGINT REFERENCES tasks(id) ON DELETE SET NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('created','skipped_overlap','skipped_missed','failed')),
+    prepared BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(schedule_id, scheduled_at)
+);
+CREATE INDEX IF NOT EXISTS task_schedule_runs_task ON task_schedule_runs(task_id);

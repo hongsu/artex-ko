@@ -909,6 +909,10 @@ export interface TrafficHost {
 
 // ---- App settings (runtime toggles) ----
 export interface Settings {
+  timezone_env?: string;
+  timezone_override?: string;
+  timezone_effective?: string;
+  timezone_source?: "override" | "environment" | "default";
   traffic_capture: boolean;
   agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
   llm_record: boolean; // LLM 录制开关（默认关）；关闭时不记录任何 LLM 调用
@@ -1612,4 +1616,42 @@ export interface InterceptExecution {
   session: string;
   seq: number;
   items: Activity[];
+}
+
+export interface TaskScheduleSpec {
+  kind: "once" | "daily" | "weekly";
+  date?: string;
+  time: string;
+  weekday: number;
+  timezone: string;
+}
+export interface ScheduledTaskInput {
+  name?: string;
+  category_id?: number | null;
+  description: string;
+  goal: string;
+  llm_profile_ids?: number[];
+  source_task_ids?: number[];
+  company_ids?: number[];
+  timeout_seconds?: number;
+  plan_heartbeat_seconds?: number;
+  coverage_enabled?: boolean;
+  seed_first_intent?: boolean;
+  intercept_rules?: AssetInterceptRuleInput[];
+}
+export interface TaskSchedule {
+  revision: number;
+  id: number;
+  spec: TaskScheduleSpec;
+  task: ScheduledTaskInput;
+  enabled: boolean;
+  next_run_at: string | null;
+}
+export interface TaskScheduleRun {
+  id: number;
+  scheduled_at: string;
+  task_id: number | null;
+  outcome: "created" | "skipped_overlap" | "skipped_missed" | "failed";
+  task_status?: string;
+  created_at: string;
 }
